@@ -3,7 +3,10 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - main
+      - master
+  pull_request:
+    branches:
+      - master
 
 jobs:
   # 阶段1：单元测试
@@ -22,8 +25,8 @@ jobs:
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
+          pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+          pip install pytest -i https://pypi.tuna.tsinghua.edu.cn/simple
 
       - name: 运行单元测试
         run: python -m pytest test_app.py -v
@@ -33,7 +36,7 @@ jobs:
     name: 构建并推送 Docker 镜像
     needs: test
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -56,3 +59,24 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/se-web-app:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/se-web-app:${{ steps.vars.outputs.sha_short }}
+
+  # 阶段3：部署（可选，需配置 secrets）
+  deploy:
+    name: 部署到服务器
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: false  # 改为 true 并配置 secrets 后启用
+    steps:
+      - name: SSH 部署
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USERNAME }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/se-web-app:latest
+            docker stop se-web-app || true
+            docker rm se-web-app || true
+            docker run -d --name se-web-app -p 80:5000 --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/se-web-app:latest
+            docker image prune -f
